@@ -17,7 +17,10 @@ var highlights []byte
 var test []byte
 
 func Loader(rtm *rt.Runtime) rt.Value {
-	hl := NewHighlighter(bash.GetLanguage())
+	hl, err := NewHighlighter(bash.GetLanguage())
+	if err != nil {
+		panic(err)
+	}
 	fn := func(tt *rt.Thread, cc *rt.GoCont) (rt.Cont, error) {
 		if err := cc.Check1Arg(); err != nil {
 			return nil, err
@@ -39,25 +42,21 @@ func Loader(rtm *rt.Runtime) rt.Value {
 	return rt.FunctionValue(r)
 }
 
-// func main() {
-// 	hl := NewHighlighter(bash.GetLanguage())
-// 	t, err := hl.Highlight(test)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	fmt.Println(string(t))
-// }
-
 type Highlighter struct {
 	lang    *ts.Language
 	oldTree *ts.Tree
 	parser  *ts.Parser
+	query   *ts.Query
 }
 
-func NewHighlighter(lang *ts.Language) *Highlighter {
+func NewHighlighter(lang *ts.Language) (*Highlighter, error) {
+	q, err := ts.NewQuery(highlights, lang)
+	if err != nil {
+		return nil, err
+	}
 	parser := ts.NewParser()
 	parser.SetLanguage(lang)
-	return &Highlighter{lang: lang, oldTree: nil, parser: parser}
+	return &Highlighter{lang: lang, oldTree: nil, parser: parser, query: q}, nil
 }
 
 var THEME = map[string]string{
@@ -79,20 +78,16 @@ func (h *Highlighter) Highlight(text string) (string, error) {
 
 	root := tree.RootNode()
 
-	q, err := ts.NewQuery(highlights, h.lang)
-	if err != nil {
-		return "", err
-	}
-
 	qc := ts.NewQueryCursor()
-	qc.Exec(q, root)
+	qc.Exec(h.query, root)
 
 	type Highlight struct {
+		isSome  bool
 		code    string
 		endByte uint32
 	}
 
-	highlights := make(map[uint32]Highlight)
+	highlights := make([]Highlight, len(text))
 
 	for {
 		m, ok := qc.NextMatch()
@@ -102,14 +97,14 @@ func (h *Highlighter) Highlight(text string) (string, error) {
 		m = qc.FilterPredicates(m, []byte(text))
 
 		for _, c := range m.Captures {
-			deco := q.CaptureNameForId(c.Index)
+			deco := h.query.CaptureNameForId(c.Index)
 			code, ok := THEME[deco]
 			if !ok {
 				continue
 			}
 
 			sb, eb := c.Node.StartByte(), c.Node.EndByte()
-			highlights[sb] = Highlight{code: code, endByte: eb}
+			highlights[sb] = Highlight{isSome: true, code: code, endByte: eb}
 		}
 	}
 
@@ -117,8 +112,8 @@ func (h *Highlighter) Highlight(text string) (string, error) {
 	var ofs uint32
 
 	for ofs = 0; ofs < uint32(len(text)); ofs++ {
-		hl, ok := highlights[ofs]
-		if !ok {
+		hl := highlights[ofs]
+		if !hl.isSome {
 			bld.WriteByte(text[ofs])
 			continue
 		}
