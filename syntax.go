@@ -42,6 +42,18 @@ func Loader(rtm *rt.Runtime) rt.Value {
 	return rt.FunctionValue(r)
 }
 
+func main() {
+	hl, err := NewHighlighter(bash.GetLanguage())
+	if err != nil {
+		panic(err)
+	}
+	text, err := hl.Highlight(string(test))
+	if err != nil {
+		panic(err)
+	}
+	println(text)
+}
+
 type Highlighter struct {
 	lang    *ts.Language
 	oldTree *ts.Tree
@@ -82,12 +94,11 @@ func (h *Highlighter) Highlight(text string) (string, error) {
 	qc.Exec(h.query, root)
 
 	type Highlight struct {
-		isSome  bool
 		code    string
 		endByte uint32
 	}
 
-	highlights := make([]Highlight, len(text))
+	highlights := make(map[uint32]Highlight)
 
 	for {
 		m, ok := qc.NextMatch()
@@ -104,7 +115,7 @@ func (h *Highlighter) Highlight(text string) (string, error) {
 			}
 
 			sb, eb := c.Node.StartByte(), c.Node.EndByte()
-			highlights[sb] = Highlight{isSome: true, code: code, endByte: eb}
+			highlights[sb] = Highlight{code: code, endByte: eb}
 		}
 	}
 
@@ -112,8 +123,8 @@ func (h *Highlighter) Highlight(text string) (string, error) {
 	var ofs uint32
 
 	for ofs = 0; ofs < uint32(len(text)); ofs++ {
-		hl := highlights[ofs]
-		if !hl.isSome {
+		hl, ok := highlights[ofs]
+		if !ok {
 			bld.WriteByte(text[ofs])
 			continue
 		}
@@ -122,7 +133,9 @@ func (h *Highlighter) Highlight(text string) (string, error) {
 		bld.WriteString(string(text[ofs:hl.endByte]))
 		bld.WriteString("\033[0m")
 
-		ofs = hl.endByte - 1 // skip the rest of the highlight
+		if ofs <= hl.endByte-1 {
+			ofs = hl.endByte - 1 // skip the rest of the highlight
+		}
 	}
 
 	return bld.String(), nil
